@@ -1,0 +1,18 @@
+extends: "base.yaml"
+
+model:
+  name: "lstm_reg"
+  seq_len: 12              # 12 месячных снимков
+  hidden_size: 32
+  num_layers: 1
+  dropout: 0.2
+  loss: "smooth_l1"
+
+training:
+  optimizer: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  batch_size: 512
+  max_epochs: 50
+  early_stopping_patience: 5
+  grad_clip: 1.0

@@ -1,0 +1,71 @@
+# Базовый конфиг: общие параметры пайплайна.
+# Конкретные модели наследуют/переопределяют поля в configs/<model>.yaml.
+
+paths:
+  raw_kaggle: "data/raw/kaggle/Stocks"
+  processed_prices: "data/processed/prices.parquet"
+  processed_returns: "data/processed/returns.parquet"
+  benchmark: "data/processed/spx.parquet"        # ^GSPC daily, скачиваем yfinance
+  features_dir: "data/features"
+  predictions_dir: "results/predictions"
+  weights_dir: "results/weights"
+  pnl_dir: "results/pnl"
+
+dates:
+  start: "1995-01-01"     # ниже — данные слишком разрежены
+  oos_start: "2010-01-01"
+  oos_end: "2017-11-10"   # потолок Kaggle-датасета
+
+universe:
+  top_n: 1500              # Top по 21d dollar volume
+  min_history_months: 24
+  min_price: 5.0           # фильтр penny stocks
+
+rebalance:
+  frequency: "M"           # ежемесячно, конец месяца
+  lag_trading_days: 21
+
+train_window:
+  months: 60
+  retrain: "from_scratch"  # каждый месяц с нуля
+  inner_val_months: 12     # последний год train-окна — валидация
+
+features:
+  momentum_lookbacks: [1, 3, 6, 12]       # месяцы
+  vol_lookback_days: 63
+  vol_annualization: 252
+  macd_pairs:                              # (fast, slow) EMA в днях
+    - [8, 24]
+    - [16, 48]
+    - [32, 96]
+    - [64, 192]
+    - [12, 26]
+    - [5, 35]
+    - [10, 30]
+    - [20, 60]
+  signal_ema_days: 9
+  zscore_scope: "cross_section"            # параметры μ,σ только из train-окна
+
+target:
+  regression: "ex_mean_next_return"        # r_{t+1,i} - mean_i(r_{t+1,i})
+  classification:
+    type: "top_bottom_decile"
+    top_q: 0.1
+    bottom_q: 0.1
+
+portfolio:
+  long_quantile: 0.10
+  short_quantile: 0.10
+  weighting: "equal"
+  dollar_neutral: true
+  market_neutral: true
+  beta_lookback_days: 252
+
+costs:
+  per_side_bps: 5.0
+
+seeds: [0, 1, 2, 3, 4]
+
+evaluation:
+  trading_days_per_year: 252
+  risk_free_rate: 0.0

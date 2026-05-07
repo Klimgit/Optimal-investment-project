@@ -1,1 +1,27 @@
-.idea
+.idea/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Data and artifacts (large, regenerable)
+data/raw/
+data/processed/
+data/features/
+results/*/
+!results/.gitkeep
+mlruns/
+mlartifacts/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/

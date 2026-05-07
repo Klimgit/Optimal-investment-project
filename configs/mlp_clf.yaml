@@ -1,0 +1,21 @@
+extends: "base.yaml"
+
+model:
+  name: "mlp_clf"
+  hidden_sizes: [64, 32]
+  dropout: 0.5            # выше — для MC-Dropout
+  activation: "relu"
+  loss: "bce"
+
+training:
+  optimizer: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  batch_size: 1024
+  max_epochs: 50
+  early_stopping_patience: 5
+  grad_clip: 1.0
+
+inference:
+  mc_dropout_samples: 30
+  uncertainty_filter: false   # включается в robustness-эксперименте

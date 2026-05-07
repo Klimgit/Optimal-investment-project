@@ -1,0 +1,17 @@
+extends: "base.yaml"
+
+model:
+  name: "mlp_reg"
+  hidden_sizes: [64, 32]
+  dropout: 0.3
+  activation: "relu"
+  loss: "smooth_l1"
+
+training:
+  optimizer: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  batch_size: 1024
+  max_epochs: 50
+  early_stopping_patience: 5
+  grad_clip: 1.0
