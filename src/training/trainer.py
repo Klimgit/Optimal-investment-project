@@ -53,6 +53,8 @@ def _make_loss(name: str) -> nn.Module:
         return nn.SmoothL1Loss()
     if name == "mse":
         return nn.MSELoss()
+    if name == "bce":
+        return nn.BCEWithLogitsLoss()
     msg = f"Unknown loss: {name}"
     raise ValueError(msg)
 
@@ -171,3 +173,41 @@ def predict_torch(model: nn.Module, X: np.ndarray, device: str = "cpu", batch_si
             out.append(model(xb).cpu().numpy())
     pred = np.concatenate(out, axis=0)
     return pred.reshape(-1)
+
+
+def predict_torch_mc(
+    model: nn.Module,
+    X: np.ndarray,
+    n_samples: int = 30,
+    device: str = "cpu",
+    batch_size: int = 1024,
+) -> tuple[np.ndarray, np.ndarray]:
+    """MC-Dropout инференс: K forward-passes с включённым dropout.
+
+    Returns
+    -------
+    mean : `[N]` усреднённый logit (или raw output) по K сэмплам.
+    std  : `[N]` стандартное отклонение по K сэмплам — мера эпистемической
+           неопределённости: высокая std → модель «не уверена».
+
+    Примечание: оставляем `model.train()`, чтобы Dropout-слои оставались
+    активны во время инференса. Все остальные `nn.Dropout`-вызовы должны
+    быть включены — это и есть суть Monte-Carlo Dropout.
+    """
+    model.train()  # keep dropout layers active
+    dev = torch.device(device)
+    model = model.to(dev)
+    X_t = torch.tensor(X, dtype=torch.float32)
+
+    samples = []
+    with torch.no_grad():
+        for _ in range(n_samples):
+            out = []
+            for i in range(0, X_t.shape[0], batch_size):
+                xb = X_t[i:i + batch_size].to(dev)
+                out.append(model(xb).cpu())
+            samples.append(torch.cat(out, dim=0))
+    stack = torch.stack(samples, dim=0)  # [K, N, 1]
+    mean = stack.mean(dim=0).numpy().reshape(-1)
+    std = stack.std(dim=0).numpy().reshape(-1)
+    return mean, std
