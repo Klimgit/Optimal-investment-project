@@ -33,6 +33,7 @@ from src.evaluation.tracker import ExperimentTracker
 from src.models.base import BaseModel
 from src.models.logreg import LogRegL2Model
 from src.models.ridge import RidgeModel
+from src.models.rule_based import MomentumRuleModel
 from src.utils.seed import set_seed
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,16 @@ def _strategy_specs() -> dict[str, dict]:
             "model_factory": lambda: LogRegL2Model(C=1.0, max_iter=1000),
             "target_col": "target_clf",
             "model_params": {"model": "LogisticRegression", "C": 1.0, "max_iter": 1000},
+        },
+        "follow_winner": {
+            "model_factory": lambda: MomentumRuleModel(direction=1.0),
+            "target_col": "target_reg",
+            "model_params": {"model": "FollowTheWinner", "feature": "r12", "direction": 1.0},
+        },
+        "follow_loser": {
+            "model_factory": lambda: MomentumRuleModel(direction=-1.0),
+            "target_col": "target_reg",
+            "model_params": {"model": "FollowTheLoser", "feature": "r12", "direction": -1.0},
         },
     }
 
@@ -156,7 +167,7 @@ def _print_summary(results: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--strategies", nargs="+", default=["ridge", "logreg"], choices=["ridge", "logreg"])
+    parser.add_argument("--strategies", nargs="+", default=["ridge", "logreg"], choices=["ridge", "logreg", "follow_winner", "follow_loser"])
     parser.add_argument("--start", type=str, default="2010-01-01")
     parser.add_argument("--end", type=str, default="2017-11-09")
     parser.add_argument("--train-window", type=int, default=60)
