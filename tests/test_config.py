@@ -12,10 +12,10 @@ def test_base_config_loads():
 
 def test_mlp_reg_extends_base():
     cfg = load_config("mlp_reg.yaml")
-    # унаследованные поля
+
     assert cfg["universe"]["top_n"] == 1500
     assert cfg["rebalance"]["lag_trading_days"] == 21
-    # собственные поля
+
     assert cfg["model"]["name"] == "mlp_reg"
     assert cfg["model"]["loss"] == "smooth_l1"
     assert cfg["training"]["lr"] == 1e-3

@@ -44,7 +44,7 @@ class _MCDropoutNet(nn.Module):
         x = self.do1(x)
         x = torch.relu(self.fc2(x))
         x = self.do2(x)
-        return self.head(x)  # raw logits
+        return self.head(x)              
 
 
 class MCDropoutMLPClassifier(BaseModel):

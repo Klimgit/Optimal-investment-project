@@ -2,7 +2,7 @@ extends: "base.yaml"
 
 model:
   name: "lstm_reg"
-  seq_len: 12              # 12 месячных снимков
+  seq_len: 12
   hidden_size: 32
   num_layers: 1
   dropout: 0.2

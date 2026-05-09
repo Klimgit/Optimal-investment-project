@@ -46,7 +46,7 @@ def test_mc_dropout_returns_uncertainty():
     assert proba.shape == (200,)
     assert sigma.shape == (200,)
     assert (sigma >= 0).all()
-    assert sigma.std() > 1e-6  # MC dropout produces variability
+    assert sigma.std() > 1e-6                                   
 
 
 def test_mc_dropout_single_class_fallback():
@@ -102,7 +102,7 @@ def test_mc_strategy_with_uncertainty_filter(tmp_path):
     scores = strat.predict_scores(PredictionData(pred_date=pred_date))
     assert isinstance(scores, pd.Series)
     assert scores.notna().all()
-    # Фильтр должен оставить ≤ половины ассетов (с floor на minimum=top/bot 1).
+                                                                               
     assert len(scores) <= 30
 
 

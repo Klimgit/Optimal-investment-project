@@ -1,40 +1,37 @@
-# Базовый конфиг: общие параметры пайплайна.
-# Конкретные модели наследуют/переопределяют поля в configs/<model>.yaml.
-
 paths:
   raw_kaggle: "data/raw/kaggle/Stocks"
   processed_prices: "data/processed/prices.parquet"
   processed_returns: "data/processed/returns.parquet"
-  benchmark: "data/processed/spx.parquet"        # ^GSPC daily, скачиваем yfinance
+  benchmark: "data/processed/spx.parquet"
   features_dir: "data/features"
   predictions_dir: "results/predictions"
   weights_dir: "results/weights"
   pnl_dir: "results/pnl"
 
 dates:
-  start: "1995-01-01"     # ниже — данные слишком разрежены
+  start: "1995-01-01"
   oos_start: "2010-01-01"
-  oos_end: "2017-11-10"   # потолок Kaggle-датасета
+  oos_end: "2017-11-10"
 
 universe:
-  top_n: 1500              # Top по 21d dollar volume
+  top_n: 1500
   min_history_months: 24
-  min_price: 5.0           # фильтр penny stocks
+  min_price: 5.0
 
 rebalance:
-  frequency: "M"           # ежемесячно, конец месяца
+  frequency: "M"
   lag_trading_days: 21
 
 train_window:
   months: 60
-  retrain: "from_scratch"  # каждый месяц с нуля
-  inner_val_months: 12     # последний год train-окна — валидация
+  retrain: "from_scratch"
+  inner_val_months: 12
 
 features:
-  momentum_lookbacks: [1, 3, 6, 12]       # месяцы
+  momentum_lookbacks: [1, 3, 6, 12]
   vol_lookback_days: 63
   vol_annualization: 252
-  macd_pairs:                              # (fast, slow) EMA в днях
+  macd_pairs:
     - [8, 24]
     - [16, 48]
     - [32, 96]
@@ -44,10 +41,10 @@ features:
     - [10, 30]
     - [20, 60]
   signal_ema_days: 9
-  zscore_scope: "cross_section"            # параметры μ,σ только из train-окна
+  zscore_scope: "cross_section"
 
 target:
-  regression: "ex_mean_next_return"        # r_{t+1,i} - mean_i(r_{t+1,i})
+  regression: "ex_mean_next_return"
   classification:
     type: "top_bottom_decile"
     top_q: 0.1

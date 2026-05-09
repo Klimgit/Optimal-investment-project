@@ -30,7 +30,7 @@ class KaggleUSExperimentConfig(USExperimentConfig):
     HEDGE_FREQ: int | str | None = field(default=None)
     MIN_ROLLING_PERIODS: int | None = field(default=1)
 
-    # Без causal-window на первом этапе.
+                                        
     CAUSAL_WINDOW_SIZE: int | None = field(default=None)
     CAUSAL_WINDOW_END_DATE_FIELD: str | None = field(default=None)
 

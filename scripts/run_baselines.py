@@ -1,9 +1,9 @@
-"""Полный OOS-прогон бейзлайнов: Ridge (regression) и LogReg+L2 (classification).
+"""Полный OOS-прогон бейзлайнов: Ridge/GBRT (regression) и LogReg+L2 (classification).
 
 Запуск:
 
     PYTHONPATH=. python scripts/run_baselines.py
-    PYTHONPATH=. python scripts/run_baselines.py --strategies ridge logreg
+    PYTHONPATH=. python scripts/run_baselines.py --strategies ridge gbrt logreg follow_winner follow_loser
     PYTHONPATH=. python scripts/run_baselines.py --start 2010-01-01 --end 2017-11-09
     PYTHONPATH=. python scripts/run_baselines.py --no-mlflow
 
@@ -31,6 +31,7 @@ from src.backtest.strategy import MLScoringStrategy
 from src.evaluation.artifacts import save_run_artifacts
 from src.evaluation.tracker import ExperimentTracker
 from src.models.base import BaseModel
+from src.models.gbrt import GBRTModel
 from src.models.logreg import LogRegL2Model
 from src.models.ridge import RidgeModel
 from src.models.rule_based import MomentumRuleModel
@@ -46,6 +47,23 @@ def _strategy_specs() -> dict[str, dict]:
             "model_factory": lambda: RidgeModel(alpha=10.0),
             "target_col": "target_reg",
             "model_params": {"model": "Ridge", "alpha": 10.0},
+        },
+        "gbrt": {
+            "model_factory": lambda: GBRTModel(
+                learning_rate=0.05,
+                max_depth=4,
+                max_iter=300,
+                min_samples_leaf=50,
+                random_state=0,
+            ),
+            "target_col": "target_reg",
+            "model_params": {
+                "model": "HistGradientBoostingRegressor",
+                "learning_rate": 0.05,
+                "max_depth": 4,
+                "max_iter": 300,
+                "min_samples_leaf": 50,
+            },
         },
         "logreg": {
             "model_factory": lambda: LogRegL2Model(C=1.0, max_iter=1000),
@@ -167,12 +185,18 @@ def _print_summary(results: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--strategies", nargs="+", default=["ridge", "logreg"], choices=["ridge", "logreg", "follow_winner", "follow_loser"])
+    parser.add_argument(
+        "--strategies",
+        nargs="+",
+        default=["ridge", "gbrt", "logreg"],
+        choices=["ridge", "gbrt", "logreg", "follow_winner", "follow_loser"],
+    )
     parser.add_argument("--start", type=str, default="2010-01-01")
     parser.add_argument("--end", type=str, default="2017-11-09")
     parser.add_argument("--train-window", type=int, default=60)
     parser.add_argument("--quantile", type=float, default=0.1)
     parser.add_argument("--broker-fee", type=float, default=0.0005, help="bps как доля; 0.0005 = 5bp")
+    parser.add_argument("--bid-ask-spread", type=float, default=0.0, help="полуширина спреда как доля")
     parser.add_argument("--no-mlflow", action="store_true")
     parser.add_argument("--experiment-name", type=str, default="dl-momentum-baselines")
     parser.add_argument("--seed", type=int, default=0)
@@ -187,7 +211,7 @@ def main() -> None:
 
     trading_cfg = TradingConfig(
         broker_fee=args.broker_fee,
-        bid_ask_spread=0.0,
+        bid_ask_spread=args.bid_ask_spread,
         total_exposure=1.0,
         max_exposure=None,
         min_exposure=None,

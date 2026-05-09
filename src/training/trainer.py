@@ -4,7 +4,9 @@
 - мини-данные (60 месяцев × ~1500 акций) → 90k samples, легко влезает в RAM,
   поэтому полный mini-batch training через `TensorDataset` + `DataLoader`;
 - Smooth-L1 (Huber) loss — устойчив к жирным хвостам месячных доходностей;
-- val-split: последний `val_frac` хронологически из train-окна;
+- val-split: ``random`` | ``chrono``; при ``chrono`` + ``val_group_ids`` —
+  последние ``val_frac`` **календарных групп** (месяцев), без смешивания
+  тикеров одной даты между train и val;
 - early stopping по val_loss с patience;
 - возврат обученной модели + train/val curves для логирования.
 
@@ -34,9 +36,14 @@ class TrainConfig:
     val_frac: float = 0.2
     patience: int = 5
     device: str = "cpu"
-    loss: str = "smooth_l1"  # "smooth_l1" | "mse"
+    loss: str = "smooth_l1"                       
+    val_split_mode: str = "random"                       
+    grad_clip: float | None = None
+    scheduler: str | None = None                   
+    cosine_eta_min: float = 0.0                                         
     seed: int = 0
     verbose: bool = False
+    val_group_ids: np.ndarray | None = None                                                 
 
 
 @dataclass
@@ -66,6 +73,38 @@ def _seed_all(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def chronological_group_train_val_mask(
+    group_ids: np.ndarray, val_frac: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Маски train/val: валидация = целые **последние** календарные группы (~``val_frac``).
+
+    Parameters
+    ----------
+    group_ids
+        Длина n; один id на строку выборки; id упорядочены по времени (0…T-1).
+    val_frac
+        Доля уникальных групп, попадающих в val.
+
+    Returns
+    -------
+    train_mask, val_mask
+        Булевы массивы длины n.
+    """
+    g = np.asarray(group_ids)
+    uniq = np.unique(g)
+    n_g = len(uniq)
+    n_val_g = max(1, int(round(val_frac * n_g)))
+    n_val_g = min(n_val_g, max(n_g - 1, 0))
+    if n_val_g < 1 or n_g <= 1:
+        empty_t = np.zeros(len(g), dtype=bool)
+        empty_v = np.zeros(len(g), dtype=bool)
+        return empty_t, empty_v
+    val_set = set(uniq[-n_val_g:])
+    val_mask = np.array([x in val_set for x in g], dtype=bool)
+    train_mask = ~val_mask
+    return train_mask, val_mask
+
+
 def train_torch_regressor(
     model: nn.Module,
     X: np.ndarray,
@@ -75,9 +114,7 @@ def train_torch_regressor(
     """Обучить регрессор с early stopping и вернуть `model` с best weights inplace.
 
     `X` может быть 2D (для MLP) или 3D (для LSTM, shape `[N, T, F]`).
-    Val-split — последние `val_frac` примеров (предполагаем, что
-    вызывающий уже отсортировал их хронологически или нет — для нашего
-    cross-section это не критично).
+    Val-split: см. ``TrainConfig.val_split_mode`` / ``val_group_ids``.
     """
     _seed_all(config.seed)
     device = torch.device(config.device)
@@ -94,8 +131,30 @@ def train_torch_regressor(
         msg = f"Not enough training data: n_train={n_train}"
         raise ValueError(msg)
 
-    perm = torch.randperm(n, generator=torch.Generator().manual_seed(config.seed))
-    train_idx, val_idx = perm[:n_train], perm[n_train:]
+    use_group_chrono = (
+        config.val_split_mode == "chrono"
+        and config.val_group_ids is not None
+        and len(config.val_group_ids) == n
+    )
+    if use_group_chrono:
+        train_mask, val_mask = chronological_group_train_val_mask(
+            config.val_group_ids, config.val_frac
+        )
+        if train_mask.sum() < 16 or val_mask.sum() < 1 or not train_mask.any():
+            use_group_chrono = False
+        else:
+            train_idx = torch.from_numpy(np.flatnonzero(train_mask))
+            val_idx = torch.from_numpy(np.flatnonzero(val_mask))
+            n_train = int(train_idx.shape[0])
+            n_val = int(val_idx.shape[0])
+
+    if not use_group_chrono:
+        if config.val_split_mode == "chrono":
+            train_idx = torch.arange(0, n_train)
+            val_idx = torch.arange(n_train, n)
+        else:
+            perm = torch.randperm(n, generator=torch.Generator().manual_seed(config.seed))
+            train_idx, val_idx = perm[:n_train], perm[n_train:]
     X_tr, y_tr = X_t[train_idx], y_t[train_idx]
     X_va, y_va = X_t[val_idx], y_t[val_idx]
 
@@ -106,6 +165,15 @@ def train_torch_regressor(
 
     loss_fn = _make_loss(config.loss)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    scheduler = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(config.epochs, 1),
+            eta_min=config.cosine_eta_min,
+        )
+        if config.scheduler == "cosine"
+        else None
+    )
 
     best_val = float("inf")
     best_state = None
@@ -126,6 +194,8 @@ def train_torch_regressor(
             pred = model(xb)
             loss = loss_fn(pred, yb)
             loss.backward()
+            if config.grad_clip is not None and config.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.grad_clip)
             optimizer.step()
             running += loss.item() * xb.size(0)
             n_seen += xb.size(0)
@@ -142,6 +212,8 @@ def train_torch_regressor(
 
         if config.verbose:
             logger.info("epoch %d  train=%.5f  val=%.5f", epoch, train_loss, val_loss)
+        if scheduler is not None:
+            scheduler.step()
 
         if n_val > 0 and val_loss + 1e-8 < best_val:
             best_val = val_loss
@@ -194,7 +266,7 @@ def predict_torch_mc(
     активны во время инференса. Все остальные `nn.Dropout`-вызовы должны
     быть включены — это и есть суть Monte-Carlo Dropout.
     """
-    model.train()  # keep dropout layers active
+    model.train()                              
     dev = torch.device(device)
     model = model.to(dev)
     X_t = torch.tensor(X, dtype=torch.float32)
@@ -207,7 +279,7 @@ def predict_torch_mc(
                 xb = X_t[i:i + batch_size].to(dev)
                 out.append(model(xb).cpu())
             samples.append(torch.cat(out, dim=0))
-    stack = torch.stack(samples, dim=0)  # [K, N, 1]
+    stack = torch.stack(samples, dim=0)             
     mean = stack.mean(dim=0).numpy().reshape(-1)
     std = stack.std(dim=0).numpy().reshape(-1)
     return mean, std

@@ -7,11 +7,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# scripts is not a package, импортируем по пути
+                                               
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import compare_runs  # type: ignore  # noqa: E402
+import compare_runs                              
 
 
 def _make_single_run(d: Path, *, seed: int = 0) -> None:
@@ -50,7 +50,7 @@ def test_load_run_agg(tmp_path):
     run = compare_runs._load_run(d)
     assert run is not None
     assert run["kind"] == "agg"
-    assert run["name"] == "mlp"  # _agg suffix removed
+    assert run["name"] == "mlp"                       
     assert float(run["metrics"]["sharpe"]) == 0.6
 
 

@@ -24,6 +24,54 @@ def test_mlp_fits_simple_signal():
     assert corr > 0.7
 
 
+def test_mlp_wide_same_reg_smoke():
+    """Смок для пресета mlp_128_e30 (широкий MLP + те же гиперы, что у базового)."""
+    X, y = _linear_xy(n=400, d=8, seed=5)
+    m = MLPRegressor(
+        hidden=(128, 64),
+        dropout=0.3,
+        epochs=8,
+        batch_size=128,
+        lr=1e-3,
+        weight_decay=1e-4,
+        patience=4,
+        val_frac=0.2,
+        seed=3,
+    )
+    m.fit(X, y)
+    assert m.predict(X).shape == (X.shape[0],)
+
+
+def test_mlp_loss_mse_runs():
+    X, y = _linear_xy(n=200, d=5, seed=2)
+    m = MLPRegressor(
+        hidden=(16, 8), dropout=0.1, epochs=5, batch_size=64, lr=5e-3,
+        loss="mse", seed=2,
+    )
+    m.fit(X, y)
+    assert m.predict(X).shape == (X.shape[0],)
+
+
+def test_mlp_v2_options_work():
+    X, y = _linear_xy(n=300, d=5, seed=3)
+    m = MLPRegressor(
+        hidden=(32, 32),
+        dropout=0.2,
+        epochs=8,
+        batch_size=64,
+        lr=1e-3,
+        val_split_mode="chrono",
+        scheduler="cosine",
+        grad_clip=1.0,
+        use_batch_norm=True,
+        residual=True,
+        seed=1,
+    )
+    m.fit(X, y)
+    pred = m.predict(X)
+    assert pred.shape == (X.shape[0],)
+
+
 def test_mlp_rejects_3d_input():
     X = np.zeros((10, 3, 4), dtype=np.float32)
     y = np.zeros(10, dtype=np.float32)

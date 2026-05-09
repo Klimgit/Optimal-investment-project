@@ -10,7 +10,7 @@ log-шкала для equity (как принято в финансах).
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
@@ -29,7 +29,8 @@ def _to_series(returns: pd.Series | pd.DataFrame, name: str = "strategy") -> pd.
 
 
 def _equity_curve(returns: pd.Series) -> pd.Series:
-    return (1.0 + returns.fillna(0)).cumprod()
+    r = pd.to_numeric(returns, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    return (1.0 + r).cumprod()
 
 
 def _drawdown(returns: pd.Series) -> pd.Series:
@@ -55,7 +56,7 @@ def plot_equity(
     ax.plot(eq_s.index, eq_s.values, label=strategy_name, color=_STRATEGY_COLOR, lw=1.4)
 
     if benchmark_returns is not None:
-        b = _to_series(benchmark_returns, benchmark_name).reindex(s.index).fillna(0)
+        b = _to_series(benchmark_returns, benchmark_name).reindex(s.index)
         eq_b = _equity_curve(b)
         ax.plot(eq_b.index, eq_b.values, label=benchmark_name, color=_BENCHMARK_COLOR, lw=1.0, ls="--")
 
@@ -145,31 +146,64 @@ def plot_comparison(
     benchmark_name: str = "benchmark",
     log_scale: bool = True,
     title: str = "Strategies comparison",
+    dashed_labels: Iterable[str] | None = None,
+    figsize: tuple[float, float] | None = None,
 ) -> plt.Figure:
-    """Несколько equity-кривых на одном графике."""
-    fig, ax = plt.subplots(figsize=_FIGSIZE)
+    """Несколько equity-кривых на одном графике.
+
+    ``dashed_labels`` — имена серий из ``strategies``, для которых рисуем
+    пунктир (удобно для академических факторных бенчмарков).
+
+    Доходности рисуются как есть по своим датам: пропуски в данных остаются
+    пропусками (линия может быть прерывистой matplotlib-ом при NaN).
+    """
+    n = len(strategies)
+    w, h = figsize if figsize is not None else (_FIGSIZE[0], _FIGSIZE[1])
+    if figsize is None and n > 10:
+        w = min(16.0, 9.0 + 0.12 * n)
+    fig, ax = plt.subplots(figsize=(w, h))
     cmap = plt.get_cmap("tab10")
 
+    dashed = frozenset(dashed_labels or ())
+
     for i, (name, ret) in enumerate(strategies.items()):
-        s = _to_series(ret, name)
+        s = _to_series(ret, name).sort_index()
         eq = _equity_curve(s)
-        ax.plot(eq.index, eq.values, label=name, color=cmap(i % 10), lw=1.3)
+        vals = eq.to_numpy(dtype=float, copy=False)
+        if log_scale:
+            vals = np.maximum(vals, 1e-12)
+        ls = "--" if name in dashed else "-"
+        ax.plot(eq.index, vals, label=name, color=cmap(i % 10), lw=1.3 if ls == "-" else 1.0, ls=ls)
 
     if benchmark_returns is not None:
-        # Берём пересечение индексов как универсальный окно для бенчмарка.
-        all_idx = None
+        b_full = _to_series(benchmark_returns, benchmark_name).sort_index()
+        idx_min: pd.Timestamp | None = None
+        idx_max: pd.Timestamp | None = None
         for ret in strategies.values():
-            s = _to_series(ret).index
-            all_idx = s if all_idx is None else all_idx.intersection(s)
-        b = _to_series(benchmark_returns, benchmark_name).reindex(all_idx).fillna(0)
-        eq_b = _equity_curve(b)
-        ax.plot(eq_b.index, eq_b.values, label=benchmark_name, color=_BENCHMARK_COLOR, lw=1.0, ls="--")
+            s = _to_series(ret)
+            if len(s.index) == 0:
+                continue
+            ts0, ts1 = s.index.min(), s.index.max()
+            idx_min = ts0 if idx_min is None else min(ts0, idx_min)
+            idx_max = ts1 if idx_max is None else max(ts1, idx_max)
+        if idx_min is not None and idx_max is not None:
+            b_seg = b_full.loc[(b_full.index >= idx_min) & (b_full.index <= idx_max)].copy()
+        else:
+            b_seg = b_full
+        eq_b = _equity_curve(b_seg)
+        vals_b = eq_b.to_numpy(dtype=float, copy=False)
+        if log_scale:
+            vals_b = np.maximum(vals_b, 1e-12)
+        ax.plot(eq_b.index, vals_b, label=benchmark_name, color=_BENCHMARK_COLOR, lw=1.0, ls=":")
 
     if log_scale:
         ax.set_yscale("log")
     ax.grid(alpha=0.3, lw=0.5)
     ax.set_ylabel("Equity (NAV, log)" if log_scale else "Equity (NAV)")
-    ax.legend(frameon=False, loc="best")
+    ncurves = n + (1 if benchmark_returns is not None else 0)
+    leg_ncol = 2 if ncurves > 10 else 1
+    leg_size = 8 if ncurves > 14 else 9
+    ax.legend(frameon=False, loc="best", ncol=leg_ncol, fontsize=leg_size)
     ax.set_title(title)
     fig.tight_layout()
     return fig

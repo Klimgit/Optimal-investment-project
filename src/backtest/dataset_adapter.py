@@ -101,9 +101,9 @@ def build_kaggle_dataset(
 
     logger.info("Loading SPX and building factor column...")
     spx_excess = _load_spx_excess(spx_path).reindex(full_index)
-    # ffill пропуски при несовпадении календарей (NYSE-holiday vs bdate_range);
-    # остаточные NaN до начала SPX-серии заполняем нулём, чтобы OLS-бенчмарк
-    # в Assessor не падал на MissingDataError.
+                                                                               
+                                                                            
+                                              
     spx_excess = spx_excess.ffill().fillna(0.0)
 
     rf = pd.Series(0.0, index=full_index, name=config.RF_NAME)

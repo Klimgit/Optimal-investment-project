@@ -1,17 +1,24 @@
 """Построение признаков и таргетов для DL-momentum-стратегии.
 
-24 признака на актив:
+24 признака на актив (+ опционально 5 regime по SPX из ``paths.benchmark``):
 - 8 momentum:  r1, r3, r6, r12, sigma_ann, r3_n, r6_n, r12_n
 - 16 MACD/Signal: для 8 пар EMA (fast, slow):
     macd_{fast}_{slow} = (EMA_fast - EMA_slow) / price
     sig_{fast}_{slow}  = EMA_9(macd) / 1   (Signal линия)
+Regime: ``reg_spx_ret21/63``, ``reg_spx_vol21/63``, ``reg_spx_dd126`` —
+без cross-section Z-score (одинаковы по всем тикерам на дату снимка).
 
 Таргеты на месячный snapshot d:
     ret_next   = close[next_d] / close[d] - 1
     target_reg = ret_next - mean(ret_next over universe at d)   (ex-mean)
     target_clf = 1 если ret_next в верхнем дециле, 0 если в нижнем, NaN иначе
 
-Cross-sectional Z-score применяется ВНУТРИ каждой ребаланс-даты.
+Cross-sectional Z-score применяется **внутри каждой ребаланс-даты** (только
+поперечное сечение на эту дату — без будущих календарных месяцев). Это согласуется
+с требованием «нормировать без утечки OOS по времени» при пошаговом walk-forward:
+на каждом шаге скоринг использует фичи, известные на дату снимка. Помесячный
+retrain на скользящем окне ``train_window_months`` реализован в
+``MLScoringStrategy`` / ``quant_pml`` (как на слайдах методички).
 
 Запуск как модуль:
 
@@ -32,7 +39,7 @@ from src.utils.io import load_config, read_parquet, write_parquet
 logger = logging.getLogger(__name__)
 
 
-# ---------- имена признаков ----------
+                                       
 
 MOMENTUM_COLS: list[str] = ["r1", "r3", "r6", "r12", "sigma_ann", "r3_n", "r6_n", "r12_n"]
 
@@ -49,7 +56,53 @@ def feature_columns(macd_pairs: Iterable[tuple[int, int]]) -> list[str]:
     return list(MOMENTUM_COLS) + macd + sig
 
 
-# ---------- daily-фичи (per ticker, per day) ----------
+                                                                                  
+
+REGIME_FEATURE_COLS: list[str] = [
+    "reg_spx_ret21",
+    "reg_spx_ret63",
+    "reg_spx_vol21",
+    "reg_spx_vol63",
+    "reg_spx_dd126",
+]
+
+
+def compute_spx_regime_series(spx_close: pd.Series) -> pd.DataFrame:
+    """Дневные regime-признаки по SPX, строго causal (только прошлое и текущий бар).
+
+    Столбцы: доходности SPX, аннуализованная вола дневных ретёрнов, просадка от
+    максимума за 126 торговых дней. Индекс совпадает с ``spx_close.index``.
+    """
+    px = spx_close.sort_index().astype(float)
+    r1 = px.pct_change()
+    ret21 = px.pct_change(21)
+    ret63 = px.pct_change(63)
+    vol21 = r1.rolling(21, min_periods=10).std() * np.sqrt(252.0)
+    vol63 = r1.rolling(63, min_periods=21).std() * np.sqrt(252.0)
+    roll_max = px.rolling(126, min_periods=63).max()
+    dd126 = px / roll_max.replace(0.0, np.nan) - 1.0
+    return pd.DataFrame(
+        {
+            "reg_spx_ret21": ret21,
+            "reg_spx_ret63": ret63,
+            "reg_spx_vol21": vol21,
+            "reg_spx_vol63": vol63,
+            "reg_spx_dd126": dd126,
+        },
+        index=px.index,
+    )
+
+
+def regime_row_asof(regime_daily: pd.DataFrame, d: pd.Timestamp) -> pd.Series:
+    """Последняя строка regime на дату ``d`` включительно (нет заглядывания вперёд)."""
+    ts = pd.Timestamp(d)
+    sl = regime_daily.loc[:ts]
+    if sl.empty:
+        return pd.Series({c: np.nan for c in regime_daily.columns})
+    return sl.iloc[-1]
+
+
+                                                        
 
 def compute_daily_features(
     prices: pd.DataFrame,
@@ -105,7 +158,7 @@ def compute_daily_features(
     return df
 
 
-# ---------- monthly panel + target ----------
+                                              
 
 def build_monthly_panel(
     daily: pd.DataFrame,
@@ -113,6 +166,7 @@ def build_monthly_panel(
     feature_cols: list[str],
     top_q: float = 0.1,
     bottom_q: float = 0.1,
+    regime_daily: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Срезать daily на ребаланс-датах из universe и добавить таргеты.
 
@@ -157,6 +211,13 @@ def build_monthly_panel(
         snap.insert(0, "date", d)
         snap = snap.reset_index(drop=True)
 
+        if regime_daily is not None:
+            reg = regime_row_asof(regime_daily, pd.Timestamp(d))
+            for col in REGIME_FEATURE_COLS:
+                if col in regime_daily.columns:
+                    v = reg.get(col, np.nan)
+                    snap[col] = float(v) if pd.notna(v) else np.nan
+
         if i + 1 < len(rebal_dates):
             next_d = rebal_dates[i + 1]
             if next_d in close_wide.index:
@@ -188,7 +249,7 @@ def build_monthly_panel(
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
 
-# ---------- cross-sectional Z-score ----------
+                                               
 
 def zscore_within_date(panel: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
     """Z-score по столбцам `feature_cols` внутри каждой `date`-группы."""
@@ -201,7 +262,7 @@ def zscore_within_date(panel: pd.DataFrame, feature_cols: list[str]) -> pd.DataF
     return out
 
 
-# ---------- end-to-end ----------
+                                  
 
 def build_features(
     prices: pd.DataFrame,
@@ -211,6 +272,20 @@ def build_features(
     """Полный пайплайн: `prices` + `universe` → нормированный monthly panel."""
     macd_pairs = [tuple(p) for p in cfg["features"]["macd_pairs"]]
     feat_cols = feature_columns(macd_pairs)
+
+    regime_daily: pd.DataFrame | None = None
+    paths = cfg.get("paths") or {}
+    bench = paths.get("benchmark")
+    if bench and Path(str(bench)).exists():
+        spx_tab = read_parquet(bench)
+        if "date" in spx_tab.columns:
+            spx_tab = spx_tab.set_index("date")
+        spx_tab = spx_tab.sort_index()
+        close_col = "adj_close" if "adj_close" in spx_tab.columns else "close"
+        regime_daily = compute_spx_regime_series(spx_tab[close_col].astype(float))
+        logger.info("Regime features from %s (%d rows)", bench, len(regime_daily))
+    else:
+        logger.info("Benchmark path missing or file not found — regime features skipped")
 
     logger.info("Computing daily features (%d MACD pairs, vol=%dd)...",
                 len(macd_pairs), cfg["features"]["vol_lookback_days"])
@@ -230,9 +305,13 @@ def build_features(
         feature_cols=feat_cols,
         top_q=cfg["target"]["classification"]["top_q"],
         bottom_q=cfg["target"]["classification"]["bottom_q"],
+        regime_daily=regime_daily,
     )
 
-    logger.info("Z-scoring features within each rebalance date...")
+    logger.info(
+        "Z-scoring equity features within each rebalance date (%d cols; regime cols raw)...",
+        len(feat_cols),
+    )
     panel = zscore_within_date(panel, feat_cols)
     return panel
 

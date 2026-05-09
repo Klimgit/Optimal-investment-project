@@ -4,6 +4,12 @@
 - `_fit(training_data)`            — обучаем модель на train-окне;
 - `predict_scores(prediction_data)` → `pd.Series` со скорами на pred_date.
 
+**Ретрейн каждого месяца.** В `quant_pml` на каждый ребаланс вызывается
+`strategy.fit(training_data)` (см. `BacktestRunner.get_strategy_weights`). Здесь
+`_fit` заново делает `model = self.model_factory()` и полный обучающий `fit`
+на скользящем окне из `train_window_months` последних месяцев — новая модель от
+ребаланса к ребалансу, без online-апдейта весов.
+
 Сами фичи берём из нашего `data/features/panel.parquet`, индексированного по
 `(date, ticker)`. quant_pml не «знает» про этот файл — это наша внутренняя
 кухня. От рантайма используем только `pred_date` и `strategy.universe`.
@@ -21,6 +27,8 @@ from quant_pml.strategies.ml.scoring.base_ml_scoring_strategy import BaseMLScori
 from quant_pml.strategies.optimization_data import PredictionData, TrainingData
 
 from src.models.base import BaseModel
+from src.models.lstm import LSTMRegressor
+from src.models.mlp import MLPRegressor
 
 
 @dataclass
@@ -36,6 +44,8 @@ class TrainSlice:
     feature_cols: list[str]
     n_snapshots: int
     n_rows: int
+    date_group_ids: np.ndarray | None = None
+    """Целочисленные месяцы 0..T-1 в хронологическом порядке (для chrono-val)."""
 
 
 class MLScoringStrategy(BaseMLScoringStrategy):
@@ -43,8 +53,9 @@ class MLScoringStrategy(BaseMLScoringStrategy):
 
     Parameters
     ----------
-    model_factory : фабрика, возвращающая свежий `BaseModel` на каждый ребаланс
-        (для `retrain=from_scratch`).
+    model_factory : вызывается на **каждом** месячном ребалансе; должен вернуть
+        новый `BaseModel`, который затем учится только на текущем train-срезе
+        (`retrain from scratch`).
     panel_path : путь до `data/features/panel.parquet`.
     feature_cols : список столбцов-фич (24 для нашего setup); если None —
         все колонки кроме `date, ticker, ret_next, target_reg, target_clf`.
@@ -98,12 +109,17 @@ class MLScoringStrategy(BaseMLScoringStrategy):
     def _slice_train(self, pred_date: pd.Timestamp) -> TrainSlice:
         """Срезать panel на train-окне ≤ pred_date (исключая саму pred_date)."""
         panel = self._load_panel()
-        feat_cols = self._feature_cols  # type: ignore[assignment]
+        feat_cols = self._feature_cols                            
         train_start = pred_date - pd.DateOffset(months=self.train_window_months)
 
         snap_dates = panel.index.get_level_values("date")
         mask = (snap_dates >= train_start) & (snap_dates < pred_date)
         train = panel.loc[mask].dropna(subset=feat_cols + [self.target_col])
+
+        dates_train = train.index.get_level_values("date")
+        udates = sorted(pd.Index(dates_train).unique())
+        date_to_gid = {d: i for i, d in enumerate(udates)}
+        date_group_ids = np.array([date_to_gid[d] for d in dates_train], dtype=np.int64)
 
         if self.sequence_length <= 1:
             X = train[feat_cols].to_numpy(dtype=np.float64)
@@ -111,12 +127,14 @@ class MLScoringStrategy(BaseMLScoringStrategy):
             return TrainSlice(
                 X=X, y=y, feature_cols=feat_cols,
                 n_snapshots=int(snap_dates[mask].nunique()), n_rows=int(len(train)),
+                date_group_ids=date_group_ids,
             )
 
-        X, y = self._build_sequences_from_panel(panel, train, feat_cols)
+        X, y, dg = self._build_sequences_from_panel(panel, train, feat_cols)
         return TrainSlice(
             X=X, y=y, feature_cols=feat_cols,
             n_snapshots=int(snap_dates[mask].nunique()), n_rows=int(X.shape[0]),
+            date_group_ids=dg,
         )
 
     def _build_sequences_from_panel(
@@ -124,7 +142,7 @@ class MLScoringStrategy(BaseMLScoringStrategy):
         panel: pd.DataFrame,
         anchor_rows: pd.DataFrame,
         feat_cols: list[str],
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Собрать `[N, T, F]` последовательности для каждого (date, ticker)
         из `anchor_rows`, беря историю `T = sequence_length` месяцев из `panel`.
 
@@ -134,7 +152,7 @@ class MLScoringStrategy(BaseMLScoringStrategy):
         feat_arr = panel[feat_cols].to_numpy(dtype=np.float32)
         target_arr = panel[self.target_col].to_numpy(dtype=np.float32)
 
-        # Position lookup: (date, ticker) → row index in `panel`.
+                                                                 
         pos_lookup: dict[tuple[pd.Timestamp, str], int] = {}
         for i, idx in enumerate(panel.index):
             pos_lookup[idx] = i
@@ -144,6 +162,9 @@ class MLScoringStrategy(BaseMLScoringStrategy):
 
         Xs: list[np.ndarray] = []
         ys: list[float] = []
+        dg: list[int] = []
+        uanchors = sorted(anchor_rows.index.get_level_values("date").unique())
+        anchor_gid = {d: i for i, d in enumerate(uanchors)}
         for (anchor_date, ticker), _row in anchor_rows.iterrows():
             j = date_pos.get(anchor_date)
             if j is None or j + 1 < T:
@@ -163,7 +184,7 @@ class MLScoringStrategy(BaseMLScoringStrategy):
                 seq_rows.append(row)
             if not ok:
                 continue
-            seq = np.stack(seq_rows, axis=0)  # [T, F]
+            seq = np.stack(seq_rows, axis=0)          
             Xs.append(seq)
             target_idx = pos_lookup[(anchor_date, ticker)]
             t_val = target_arr[target_idx]
@@ -171,10 +192,17 @@ class MLScoringStrategy(BaseMLScoringStrategy):
                 Xs.pop()
                 continue
             ys.append(float(t_val))
+            dg.append(anchor_gid[anchor_date])
 
         if not Xs:
-            return np.empty((0, T, len(feat_cols)), dtype=np.float32), np.empty((0,), dtype=np.float32)
-        return np.stack(Xs, axis=0), np.asarray(ys, dtype=np.float32)
+            z = np.empty((0,), dtype=np.int64)
+            return np.empty((0, T, len(feat_cols)), dtype=np.float32), np.empty((0,), dtype=np.float32), z
+        dga = np.asarray(dg, dtype=np.int64)
+                                                                 
+        uniq_d = np.unique(dga)
+        remap = {int(u): i for i, u in enumerate(uniq_d)}
+        dga = np.array([remap[int(x)] for x in dga], dtype=np.int64)
+        return np.stack(Xs, axis=0), np.asarray(ys, dtype=np.float32), dga
 
     def _fit(self, training_data: TrainingData) -> None:
         pred_date = pd.Timestamp(training_data.pred_date)
@@ -184,8 +212,21 @@ class MLScoringStrategy(BaseMLScoringStrategy):
             self._fitted_model = None
             return
 
+                                                                     
         model = self.model_factory()
-        model.fit(slc.X, slc.y)
+        vg: np.ndarray | None = None
+        if isinstance(model, (MLPRegressor, LSTMRegressor)):
+            cfg = getattr(model, "train_cfg", None)
+            if (
+                cfg is not None
+                and getattr(cfg, "val_split_mode", "random") == "chrono"
+                and slc.date_group_ids is not None
+            ):
+                vg = slc.date_group_ids
+        if vg is not None:
+            model.fit(slc.X, slc.y, val_group_ids=vg)
+        else:
+            model.fit(slc.X, slc.y)
         self._fitted_model = model
 
     def predict_scores(self, prediction_data: PredictionData) -> pd.Series:
@@ -203,7 +244,7 @@ class MLScoringStrategy(BaseMLScoringStrategy):
         snap_date = valid.max()
 
         snap = panel.loc[snap_date]
-        feat_cols = self._feature_cols  # type: ignore[assignment]
+        feat_cols = self._feature_cols                            
         snap = snap.dropna(subset=feat_cols)
 
         if not hasattr(self, "universe") or self.universe is None:

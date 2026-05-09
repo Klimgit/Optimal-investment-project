@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import torch
 from torch import nn
@@ -44,9 +46,9 @@ class _LSTMNet(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [N, T, F]
+                      
         out, _ = self.lstm(x)
-        last = out[:, -1, :]  # [N, hidden]
+        last = out[:, -1, :]               
         return self.head(last)
 
 
@@ -67,6 +69,10 @@ class LSTMRegressor(BaseModel):
         weight_decay: float = 1e-4,
         patience: int = 4,
         val_frac: float = 0.2,
+        val_split_mode: str = "random",
+        grad_clip: float | None = None,
+        scheduler: str | None = None,
+        cosine_eta_min: float = 0.0,
         seed: int = 0,
         device: str = "cpu",
     ) -> None:
@@ -77,13 +83,15 @@ class LSTMRegressor(BaseModel):
         self.train_cfg = TrainConfig(
             epochs=epochs, batch_size=batch_size, lr=lr,
             weight_decay=weight_decay, patience=patience, val_frac=val_frac,
+            val_split_mode=val_split_mode, grad_clip=grad_clip, scheduler=scheduler,
+            cosine_eta_min=cosine_eta_min,
             seed=seed, device=device, loss="smooth_l1",
         )
         self.device = device
         self._model: _LSTMNet | None = None
         self._train_result = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> "LSTMRegressor":
+    def fit(self, X: np.ndarray, y: np.ndarray, val_group_ids: np.ndarray | None = None) -> "LSTMRegressor":
         if X.ndim != 3:
             msg = f"LSTMRegressor expects 3D X [N,T,F], got shape {X.shape}"
             raise ValueError(msg)
@@ -92,7 +100,8 @@ class LSTMRegressor(BaseModel):
             in_dim=in_dim, hidden=self.hidden, num_layers=self.num_layers,
             dropout=self.dropout, bidirectional=self.bidirectional,
         )
-        self._train_result = train_torch_regressor(self._model, X, y, self.train_cfg)
+        cfg = replace(self.train_cfg, val_group_ids=val_group_ids)
+        self._train_result = train_torch_regressor(self._model, X, y, cfg)
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:

@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# Скачивание Kaggle "Huge Stock Market Dataset" в data/raw/kaggle/.
-#
-# Pre-requisites:
-#   1. pip install kaggle  (уже в pyproject.toml dependencies)
-#   2. Kaggle API token:
-#        - https://www.kaggle.com/settings  ->  Create New API Token
-#        - сохранить kaggle.json в ~/.kaggle/kaggle.json
-#        - chmod 600 ~/.kaggle/kaggle.json
-#   3. Принять Terms на странице датасета:
-#        https://www.kaggle.com/datasets/borismarjanovic/price-volume-data-for-all-us-stocks-etfs
-#
-# Размер: ~700 MB unzipped, ~7000 файлов в Stocks/ и ~1300 в ETFs/.
 
 set -euo pipefail
 

@@ -34,7 +34,7 @@ def test_trainer_early_stopping_kicks_in():
     """Если данные шумные и patience=1 — early stop должен сработать раньше epochs."""
     rng = np.random.default_rng(0)
     X = rng.normal(0, 1, (200, 3)).astype(np.float32)
-    y = rng.normal(0, 1, 200).astype(np.float32)  # pure noise
+    y = rng.normal(0, 1, 200).astype(np.float32)              
 
     class Tiny(nn.Module):
         def __init__(self):

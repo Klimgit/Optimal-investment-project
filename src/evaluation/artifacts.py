@@ -69,16 +69,16 @@ def save_run_artifacts(
     Структура папки:
 
         results/{strategy_name}/
-            metrics.json              # все поля StrategyStatistics + loadings
-            metrics.csv               # тот же набор, в табличном виде
-            total_returns.parquet     # daily total returns
-            excess_returns.parquet    # daily excess returns
-            rebal_weights.parquet     # веса по rebalance-датам
-            benchmark_returns.parquet # SPX total
-            equity.png                # equity vs benchmark (log)
+            metrics.json
+            metrics.csv
+            total_returns.parquet
+            excess_returns.parquet
+            rebal_weights.parquet
+            benchmark_returns.parquet
+            equity.png
             drawdown.png
             rolling_sharpe.png
-            exposures.png             # long/short/net exposure
+            exposures.png
     """
     out = Path(output_dir) / strategy_name
     out.mkdir(parents=True, exist_ok=True)

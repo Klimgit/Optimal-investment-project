@@ -64,7 +64,7 @@ class MCDropoutScoringStrategy(MLScoringStrategy):
         snap_date = valid.max()
 
         snap = panel.loc[snap_date]
-        feat_cols = self._feature_cols  # type: ignore[assignment]
+        feat_cols = self._feature_cols                            
         snap = snap.dropna(subset=feat_cols)
 
         if not hasattr(self, "universe") or self.universe is None:

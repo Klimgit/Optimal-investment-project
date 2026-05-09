@@ -1,13 +1,24 @@
 """Прогон DL-регрессоров (MLP, LSTM) на полном OOS с N сидами.
 
-Каждый сид — отдельный backtest-run (полный retrain каждого ребаланса со
-своим сидом). После всех сидов считаем агрегаты: mean returns, ±std band,
-average metrics. Это честнее, чем усреднение скоров внутри одного бэктеста.
+Каждый сид — отдельный backtest-run. **На каждый месячный ребаланс `quant_pml`
+вызывает `strategy.fit`:** новый MLP из `model_factory()`, обучение с нуля на
+окне ``train-window`` месяцев (дефолт 60).
+
+Пресет ``mlp_128_e30`` — намеренный **контраст к базовому ``mlp``**: первый
+скрытый слой 128 нейронов и 30 эпох при **той же** простой схеме (random val,
+те же dropout/LR/wd, что у узкой сети). Для задачи и объёма train-окна это
+комбинация, при которой **часто наблюдается переобучение** и худшее поведение
+OOS по сравнению с узким ``mlp``. Для качественной стратегии обычно оставляют
+ме́ньшую ширину и/или chrono-val/регуляризацию (см. ``mlp_v2``).
+
+A/B (кратко): на 2016–2017 и полном OOS связка ``mlp_experimental_regime_chrono`` (regime+chrono+сильная регл)
+оказалась **хуже**, чем узкий ``mlp_best`` / ``mlp_ab_baseline`` (24 фичи, random val). См. пресеты ниже.
 
 Запуск:
 
     PYTHONPATH=. python scripts/run_dl_reg.py --strategies mlp lstm --seeds 5
-    PYTHONPATH=. python scripts/run_dl_reg.py --strategies mlp --seeds 3 --start 2014-01-01
+    PYTHONPATH=. python scripts/run_dl_reg.py --strategies mlp mlp_128_e30 --seeds 3
+    PYTHONPATH=. python scripts/run_dl_reg.py --strategies mlp_ab_baseline mlp_experimental_regime_chrono --seeds 3
 """
 from __future__ import annotations
 
@@ -26,6 +37,7 @@ from quant_pml.runner import build_backtest
 from src.backtest.dataset_adapter import build_kaggle_dataset
 from src.backtest.experiment_config import KaggleUSExperimentConfig
 from src.backtest.strategy import MLScoringStrategy
+from src.data.features import feature_columns
 from src.evaluation.artifacts import save_run_artifacts
 from src.evaluation.benchmarks import load_benchmark_returns
 from src.evaluation.plots import plot_comparison, plot_drawdown, plot_equity, plot_rolling_sharpe
@@ -33,13 +45,160 @@ from src.evaluation.tracker import ExperimentTracker
 from src.models.base import BaseModel
 from src.models.lstm import LSTMRegressor
 from src.models.mlp import MLPRegressor
+from src.utils.io import load_config
 from src.utils.seed import set_seed
 
 logger = logging.getLogger(__name__)
 
 
+def _equity_feature_cols_only() -> list[str]:
+    """Только 24 momentum/MACD-колонки из ``configs/base.yaml`` (без regime SPX)."""
+    cfg = load_config("base.yaml")
+    pairs = [tuple(p) for p in cfg["features"]["macd_pairs"]]
+    return feature_columns(pairs)
+
+
 def _strategy_specs(device: str) -> dict[str, dict]:
+    equity24 = _equity_feature_cols_only()
+
     return {
+                                                                                                              
+        "mlp_ab_baseline": {
+                                                                                                      
+            "factory": lambda seed: MLPRegressor(
+                hidden=(15, 16),
+                dropout=0.4,
+                epochs=17,
+                batch_size=1024,
+                lr=1e-3,
+                weight_decay=1e-4,
+                patience=4,
+                val_frac=0.2,
+                val_split_mode="random",
+                grad_clip=1.0,
+                scheduler="cosine",
+                cosine_eta_min=0.0,
+                seed=seed,
+                device=device,
+            ),
+            "target_col": "target_reg",
+            "sequence_length": 1,
+            "feature_cols": equity24,
+            "model_params": {"model": "MLP_AB_baseline", "features": "equity24", "val_split_mode": "random"},
+        },
+        "mlp_ab_oldtrain_regime": {
+                                                                                             
+            "factory": lambda seed: MLPRegressor(
+                hidden=(15, 16),
+                dropout=0.4,
+                epochs=17,
+                batch_size=1024,
+                lr=1e-3,
+                weight_decay=1e-4,
+                patience=4,
+                val_frac=0.2,
+                val_split_mode="random",
+                grad_clip=1.0,
+                scheduler="cosine",
+                cosine_eta_min=0.0,
+                seed=seed,
+                device=device,
+            ),
+            "target_col": "target_reg",
+            "sequence_length": 1,
+            "feature_cols": None,
+            "model_params": {"model": "MLP_AB_oldtrain_regime", "features": "all_panel", "val_split_mode": "random"},
+        },
+        "mlp_ab_newtrain_noregime": {
+                                                                                         
+            "factory": lambda seed: MLPRegressor(
+                hidden=(15, 16),
+                dropout=0.45,
+                epochs=17,
+                batch_size=1024,
+                lr=1e-3,
+                weight_decay=3e-4,
+                patience=5,
+                val_frac=0.2,
+                val_split_mode="chrono",
+                grad_clip=1.0,
+                scheduler="cosine",
+                cosine_eta_min=1e-5,
+                seed=seed,
+                device=device,
+            ),
+            "target_col": "target_reg",
+            "sequence_length": 1,
+            "feature_cols": equity24,
+            "model_params": {"model": "MLP_AB_newtrain_noregime", "features": "equity24", "val_split_mode": "chrono"},
+        },
+                                                                                              
+                                                                                           
+        "mlp_experimental_regime_chrono": {
+            "factory": lambda seed: MLPRegressor(
+                hidden=(15, 16),
+                dropout=0.45,
+                epochs=17,
+                batch_size=1024,
+                lr=1e-3,
+                weight_decay=3e-4,
+                patience=5,
+                val_frac=0.2,
+                val_split_mode="chrono",
+                grad_clip=1.0,
+                scheduler="cosine",
+                cosine_eta_min=1e-5,
+                seed=seed,
+                device=device,
+            ),
+            "target_col": "target_reg",
+            "sequence_length": 1,
+            "feature_cols": None,
+            "model_params": {
+                "model": "MLP_experimental_regime_chrono",
+                "hidden": "(15,16)",
+                "dropout": 0.45,
+                "epochs": 17,
+                "features": "all_panel_incl_regime",
+                "val_split_mode": "chrono",
+            },
+        },
+        "mlp_best": {
+                                                                                                                       
+            "factory": lambda seed: MLPRegressor(
+                hidden=(15, 16),
+                dropout=0.4,
+                epochs=17,
+                batch_size=1024,
+                lr=1e-3,
+                weight_decay=1e-4,
+                patience=4,
+                val_frac=0.2,
+                val_split_mode="random",
+                grad_clip=1.0,
+                scheduler="cosine",
+                cosine_eta_min=0.0,
+                seed=seed,
+                device=device,
+            ),
+            "target_col": "target_reg",
+            "sequence_length": 1,
+            "feature_cols": equity24,
+            "model_params": {
+                "model": "MLP_best",
+                "hidden": "(15,16)",
+                "dropout": 0.4,
+                "epochs": 17,
+                "batch_size": 1024,
+                "loss": "smooth_l1",
+                "lr": 1e-3,
+                "weight_decay": 1e-4,
+                "grad_clip": 1.0,
+                "scheduler": "cosine",
+                "features": "equity24_only",
+                "val_split_mode": "random",
+            },
+        },
         "mlp": {
             "factory": lambda seed: MLPRegressor(
                 hidden=(64, 32), dropout=0.3, epochs=40, batch_size=2048,
@@ -52,6 +211,42 @@ def _strategy_specs(device: str) -> dict[str, dict]:
                 "model": "MLP", "hidden": "(64,32)", "dropout": 0.3,
                 "loss": "smooth_l1", "epochs": 40, "lr": 1e-3, "weight_decay": 1e-4,
             },
+            "feature_cols": None,
+        },
+        "mlp_128_e30": {
+                                                                                     
+                                                                                       
+            "factory": lambda seed: MLPRegressor(
+                hidden=(128, 64), dropout=0.3, epochs=30, batch_size=2048,
+                lr=1e-3, weight_decay=1e-4, patience=4, val_frac=0.2,
+                seed=seed, device=device,
+            ),
+            "target_col": "target_reg",
+            "sequence_length": 1,
+            "model_params": {
+                "model": "MLP_128_e30_contrast",
+                "hidden": "(128,64)", "dropout": 0.3, "epochs": 30,
+                "loss": "smooth_l1", "lr": 1e-3, "weight_decay": 1e-4,
+            },
+            "feature_cols": None,
+        },
+        "mlp_v2": {
+            "factory": lambda seed: MLPRegressor(
+                hidden=(128, 128), dropout=0.2, epochs=60, batch_size=1536,
+                lr=7e-4, weight_decay=3e-4, patience=6, val_frac=0.2,
+                val_split_mode="chrono", grad_clip=1.0, scheduler="cosine",
+                use_batch_norm=True, residual=True,
+                seed=seed, device=device,
+            ),
+            "target_col": "target_reg",
+            "sequence_length": 1,
+            "model_params": {
+                "model": "MLP_v2", "hidden": "(128,128)", "dropout": 0.2,
+                "batch_norm": True, "residual": True, "val_split_mode": "chrono",
+                "scheduler": "cosine", "grad_clip": 1.0,
+                "loss": "smooth_l1", "epochs": 60, "lr": 7e-4, "weight_decay": 3e-4,
+            },
+            "feature_cols": None,
         },
         "lstm": {
             "factory": lambda seed: LSTMRegressor(
@@ -65,6 +260,7 @@ def _strategy_specs(device: str) -> dict[str, dict]:
                 "model": "LSTM", "hidden": 32, "num_layers": 1, "dropout": 0.2,
                 "sequence_length": 12, "loss": "smooth_l1", "epochs": 25, "lr": 1e-3,
             },
+            "feature_cols": None,
         },
     }
 
@@ -75,6 +271,7 @@ def _run_single_seed(
     factory: Callable[[int], BaseModel],
     target_col: str,
     sequence_length: int,
+    feature_cols: list[str] | None,
     cfg: KaggleUSExperimentConfig,
     trading_cfg: TradingConfig,
     train_window_months: int,
@@ -88,6 +285,7 @@ def _run_single_seed(
 
     strategy = MLScoringStrategy(
         model_factory=lambda s=seed: factory(s),
+        feature_cols=feature_cols,
         target_col=target_col,
         train_window_months=train_window_months,
         sequence_length=sequence_length,
@@ -183,13 +381,34 @@ def _aggregate_seeds(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--strategies", nargs="+", default=["mlp", "lstm"], choices=["mlp", "lstm"])
+    parser.add_argument(
+        "--strategies",
+        nargs="+",
+        default=["mlp", "mlp_best", "mlp_v2", "lstm"],
+        choices=[
+            "mlp",
+            "mlp_best",
+            "mlp_experimental_regime_chrono",
+            "mlp_ab_baseline",
+            "mlp_ab_oldtrain_regime",
+            "mlp_ab_newtrain_noregime",
+            "mlp_128_e30",
+            "mlp_v2",
+            "lstm",
+        ],
+    )
     parser.add_argument("--seeds", type=int, default=5, help="Кол-во сидов на стратегию")
     parser.add_argument("--start", type=str, default="2010-01-01")
     parser.add_argument("--end", type=str, default="2017-11-09")
     parser.add_argument("--train-window", type=int, default=60)
     parser.add_argument("--quantile", type=float, default=0.1)
     parser.add_argument("--broker-fee", type=float, default=0.0005)
+    parser.add_argument(
+        "--bid-ask-spread",
+        type=float,
+        default=0.0,
+        help="Полуширина спреда как доля цены за сторону (0.0005 ≈ 5 bp всего round-trip с комиссией отдельно).",
+    )
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--no-mlflow", action="store_true")
     parser.add_argument("--experiment-name", type=str, default="dl-momentum-dl-reg")
@@ -202,8 +421,10 @@ def main() -> None:
     cfg.END_DATE = pd.Timestamp(args.end)
 
     trading_cfg = TradingConfig(
-        broker_fee=args.broker_fee, bid_ask_spread=0.0,
-        total_exposure=1.0, trading_lag_days=1,
+        broker_fee=args.broker_fee,
+        bid_ask_spread=args.bid_ask_spread,
+        total_exposure=1.0,
+        trading_lag_days=1,
     )
 
     tracker = ExperimentTracker(
@@ -239,6 +460,7 @@ def main() -> None:
                     factory=spec["factory"],
                     target_col=spec["target_col"],
                     sequence_length=spec["sequence_length"],
+                    feature_cols=spec.get("feature_cols"),
                     cfg=cfg_copy, trading_cfg=trading_cfg,
                     train_window_months=args.train_window, quantile=args.quantile,
                 )

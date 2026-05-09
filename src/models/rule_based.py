@@ -16,7 +16,7 @@ import numpy as np
 
 from src.models.base import BaseModel
 
-# r12 — индекс 3 в каноническом порядке MOMENTUM_COLS = ["r1","r3","r6","r12",...]
+                                                                                  
 _R12_IDX = 3
 
 
@@ -36,7 +36,7 @@ class MomentumRuleModel(BaseModel):
         self.col_idx = col_idx
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "MomentumRuleModel":
-        return self  # правило не требует обучения
+        return self                               
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         return self.direction * X[:, self.col_idx]

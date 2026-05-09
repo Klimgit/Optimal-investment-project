@@ -58,9 +58,18 @@ mlflow ui --backend-store-uri ./mlruns
 
 Финальный сравнительный отчёт удобнее смотреть в `notebooks/04_strategies_comparison.ipynb`.
 
+Исследовательские выводы и бэклог — **`docs/research_roadmap.md`**. Литература и аудит реализации — **`docs/literature_review.md`**. Протокол holdout — **`docs/holdout_protocol.md`**.
+
+```bash
+PYTHONPATH=. python scripts/holdout_metrics.py results/mlp_best_agg --write
+PYTHONPATH=. python scripts/bootstrap_metrics.py results/mlp_best_agg --paired --eval-start 2016-01-01 --metrics all --json
+PYTHONPATH=. python scripts/compare_holdout_quality.py --impact-eta 0.00015   # таблица по всем runs → results/_summary/holdout_quality.csv
+```
+
 ## Структура проекта
 
 ```
+docs/                     # literature_review.md, research_roadmap.md
 configs/                  # YAML с дефолтами (configs/base.yaml, mlp_*.yaml, lstm_reg.yaml)
 src/
   data/                   # loader.py, universe.py, features.py
@@ -71,7 +80,7 @@ src/
   utils/                  # seed, io
 notebooks/                # 01_data_eda, 04_strategies_comparison
 tests/                    # юнит-тесты, синтетика; PYTHONPATH=. pytest -q
-scripts/                  # download_*, smoke_backtest, run_*, compare_runs
+scripts/                  # download_*, run_*, compare_runs, compare_holdout_quality, bootstrap_metrics
 results/                  # артефакты бэктестов (per-strategy + _agg + _summary)
 mlruns/                   # MLflow file-store
 ```

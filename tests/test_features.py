@@ -7,11 +7,14 @@ import pytest
 
 from src.data.features import (
     MOMENTUM_COLS,
+    REGIME_FEATURE_COLS,
     build_features,
     build_monthly_panel,
     compute_daily_features,
+    compute_spx_regime_series,
     feature_columns,
     macd_pair_names,
+    regime_row_asof,
     zscore_within_date,
 )
 
@@ -157,6 +160,34 @@ def test_build_monthly_panel_target_and_zscore():
             if len(vals) >= 2 and np.std(vals) > 0:
                 assert abs(vals.mean()) < 1e-9
                 assert abs(vals.std(ddof=1) - 1.0) < 1e-6
+
+
+def test_spx_regime_series_and_asof_are_causal():
+    idx = pd.bdate_range("2010-01-04", periods=260)
+    close = pd.Series(100 * np.linspace(1, 1.3, len(idx)), index=idx)
+    regime = compute_spx_regime_series(close)
+    assert list(regime.columns) == REGIME_FEATURE_COLS
+    d = pd.Timestamp("2011-06-01")
+    row = regime_row_asof(regime, d)
+    assert np.isfinite(row["reg_spx_dd126"])
+    assert row["reg_spx_dd126"].item() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_build_monthly_panel_broadcasts_regime_columns():
+    tickers = ["A", "B"]
+    dfs = [_make_geometric(t, n_days=500, daily_ret=0.0005) for t in tickers]
+    prices = pd.concat(dfs, ignore_index=True)
+    daily = compute_daily_features(prices, macd_pairs=PAIRS)
+    fc = feature_columns(PAIRS)
+    rebal = pd.DatetimeIndex([pd.Timestamp("2011-01-31"), pd.Timestamp("2011-02-28")])
+    universe = pd.DataFrame({"date": np.repeat(rebal, 2), "ticker": tickers * len(rebal)})
+    idx_d = pd.bdate_range("2010-06-01", periods=260)
+    spx_px = pd.Series(100 + np.arange(len(idx_d), dtype=float) * 0.05, index=idx_d)
+    regime = compute_spx_regime_series(spx_px)
+    panel = build_monthly_panel(daily, universe, fc, regime_daily=regime)
+    for col in REGIME_FEATURE_COLS:
+        assert col in panel.columns
+    assert (panel.groupby("date")["reg_spx_vol63"].transform("nunique") == 1).all()
 
 
 def test_build_features_end_to_end():

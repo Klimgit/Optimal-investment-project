@@ -2,8 +2,8 @@ extends: "base.yaml"
 
 model:
   name: "mlp_reg"
-  hidden_sizes: [64, 32]
-  dropout: 0.3
+  hidden_sizes: [15, 16]
+  dropout: 0.4
   activation: "relu"
   loss: "smooth_l1"
 
@@ -12,6 +12,9 @@ training:
   lr: 1.0e-3
   weight_decay: 1.0e-4
   batch_size: 1024
-  max_epochs: 50
-  early_stopping_patience: 5
+  max_epochs: 17
+  early_stopping_patience: 4
   grad_clip: 1.0
+  val_split_mode: "random"
+  scheduler: "cosine"
+  cosine_eta_min: 0.0

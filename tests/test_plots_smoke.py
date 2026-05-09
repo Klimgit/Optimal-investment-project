@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import matplotlib
-matplotlib.use("Agg")  # noqa: E402
+matplotlib.use("Agg")              
 
 import numpy as np
 import pandas as pd
@@ -53,4 +53,17 @@ def test_plot_comparison_runs():
     strategies = {f"s{i}": _fake_returns(seed=i) for i in range(3)}
     bench = _fake_returns(seed=99)
     fig = plot_comparison(strategies, bench)
+    assert fig is not None
+
+
+def test_plot_comparison_mismatched_native_calendars():
+    idx1 = pd.bdate_range("2015-01-01", periods=80)
+    idx2 = pd.bdate_range("2015-03-15", periods=120)
+    n1, n2 = np.full(len(idx1), 0.0008), np.full(len(idx2), 0.0008)
+    n1[40:45] = np.nan
+    strategies = {
+        "a": pd.Series(n1, index=idx1),
+        "b": pd.Series(n2, index=idx2),
+    }
+    fig = plot_comparison(strategies, benchmark_returns=None, log_scale=False)
     assert fig is not None
