@@ -336,7 +336,6 @@ def _aggregate_seeds(
     returns_list = [r["returns"].iloc[:, 0].rename(f"seed_{r['seed']}") for r in per_seed]
     all_returns = pd.concat(returns_list, axis=1).fillna(0.0)
     mean_r = all_returns.mean(axis=1).rename("mean_total_r")
-    std_r = all_returns.std(axis=1).rename("std_total_r")
 
     all_returns.to_parquet(out / "per_seed_returns.parquet")
     mean_r.to_frame().to_parquet(out / "mean_returns.parquet")

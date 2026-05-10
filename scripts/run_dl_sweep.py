@@ -275,7 +275,7 @@ def _run_one(
     stats = runner.run(preprocessor, strategy, hedger=None)
     elapsed = time.time() - t0
 
-    paths = save_run_artifacts(run_name, runner, stats, output_dir="results")
+    save_run_artifacts(run_name, runner, stats, output_dir="results")
 
     row = {
         "name": entry.name,
@@ -302,7 +302,6 @@ def _run_one(
         stats.ir_benchmark,
         elapsed,
     )
-    _ = paths
     return row
 
 

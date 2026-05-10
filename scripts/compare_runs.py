@@ -12,9 +12,10 @@
 только агрегаты — это даёт по одной строке/линии на стратегию. Флаг
 `--include-seeds` включает их.
 
-Итоговый ``comparison.png``: ``mlp_best``, ``mlp_ab_newtrain_noregime`` (MLP
-chrono+рег. без regime-фич), классические ML, follow, SPX и **Low-risk**
-(``results/bench_low_vol_ls/`` при наличии). FF не выводятся.
+Итоговый ``comparison.png``: по умолчанию фиксированный набор (ML + rule-based),
+но можно явно передать свой порядок (`--main-chart-order ...`) или включить
+все найденные стратегии (`--main-chart-all`). SPX и **Low-risk**
+(``results/bench_low_vol_ls/`` при наличии) добавляются автоматически. FF не выводятся.
 
 Дополнительно (если есть соответствующие папки в ``results/``):
 
@@ -92,7 +93,7 @@ KEY_METRICS = [
                                                                                                      
 CHART_ML: list[str] = ["ridge", "logreg", "gbrt"]
 CHART_DL: list[str] = ["mlp_best", "mlp_v2", "mlp_agg", "mlp", "lstm"]
-CHART_FOLLOW: list[str] = ["follow_winner", "follow_loser"]
+CHART_RULE_BASED: list[str] = ["follow_winner", "follow_loser"]
 
 
 def _curves_ordered(names: list[str], baseline: dict[str, pd.Series]) -> dict[str, pd.Series]:
@@ -151,6 +152,17 @@ def main() -> None:
         action="store_true",
         help="Не сохранять comparison_ml_vs_dl / comparison_follow_fw_fl / comparison_ml_dl_follow_all.",
     )
+    parser.add_argument(
+        "--main-chart-order",
+        nargs="*",
+        default=[],
+        help="Явный порядок стратегий для comparison.png (без SPX/Low-risk).",
+    )
+    parser.add_argument(
+        "--main-chart-all",
+        action="store_true",
+        help="Включить в comparison.png все найденные стратегии (в порядке metrics.csv).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -202,7 +214,12 @@ def main() -> None:
     baseline = {r["name"]: r["returns"].iloc[:, 0] for r in runs}
 
                                                                            
-    plot_curves = _curves_ordered(MAIN_SUMMARY_CHART_ORDER, baseline)
+    main_order = MAIN_SUMMARY_CHART_ORDER
+    if args.main_chart_order:
+        main_order = list(args.main_chart_order)
+    elif args.main_chart_all:
+        main_order = summary["strategy"].astype(str).tolist()
+    plot_curves = _curves_ordered(main_order, baseline)
     dashed_main: list[str] = []
     if not args.no_low_vol_line:
         inj = _load_injected_low_vol(root)
@@ -212,14 +229,14 @@ def main() -> None:
     if not plot_curves:
         logger.warning(
             "Main comparison chart: none of %s in results; plot may be empty (SPX only).",
-            MAIN_SUMMARY_CHART_ORDER,
+            main_order,
         )
     fig = plot_comparison(
         plot_curves,
         bench,
         benchmark_name="SPX (total)",
         dashed_labels=dashed_main,
-        title="mlp_best, mlp_ab_newtrain_noregime, logreg, ridge, gbrt, follow vs SPX + low-risk",
+        title="Configured strategies vs SPX + low-risk",
     )
     fig.savefig(
         summary_dir / "comparison.png",
@@ -251,16 +268,16 @@ def main() -> None:
         summary_dir,
         fname="comparison_follow_fw_fl.png",
         title="Follow the winner vs follow the loser (r12 rule)",
-        name_order=list(CHART_FOLLOW),
+        name_order=list(CHART_RULE_BASED),
         min_curves=1,
     )
-    merged = _dedupe_ordered(CHART_ML, CHART_DL, CHART_FOLLOW)
+    merged = _dedupe_ordered(CHART_ML, CHART_DL, CHART_RULE_BASED)
     _save_theme_chart(
         baseline,
         bench,
         summary_dir,
         fname="comparison_ml_dl_follow_all.png",
-        title="ML + DL + follow rules (один график)",
+        title="ML + DL + follow strategies (один график)",
         name_order=merged,
         min_curves=1,
     )

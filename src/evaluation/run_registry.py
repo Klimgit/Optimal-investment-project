@@ -40,20 +40,14 @@ def discover_run_directories(
     """Список ``(path, load_run(path))`` для всех валидных прогонов."""
     exclude_set = set(exclude)
     candidates: list[Path] = []
-    agg_strategy_names: set[str] = set()
     for p in sorted(root.iterdir()) if root.exists() else []:
         if not p.is_dir() or p.name in exclude_set:
             continue
-        if p.name.endswith("_agg"):
-            agg_strategy_names.add(p.name.removesuffix("_agg"))
         candidates.append(p)
 
     out: list[tuple[Path, dict]] = []
     for p in candidates:
         if not include_seeds and _SEED_RE.search(p.name):
-            base_name = _SEED_RE.sub("", p.name)
-            if base_name in agg_strategy_names:
-                continue
             continue
         run = load_run(p)
         if run is None:
