@@ -63,3 +63,34 @@ PYTHONPATH=. python scripts/holdout_metrics.py results/mlp_best_agg --write
 PYTHONPATH=. python scripts/bootstrap_metrics.py results/mlp_best_agg --paired --eval-start 2016-01-01 --metrics all --json
 PYTHONPATH=. python scripts/compare_holdout_quality.py --impact-eta 0.00015   # таблица по всем runs → results/_summary/holdout_quality.csv
 ```
+
+## Как добавить non-ML стратегию
+
+Минимальная схема для rule-based стратегии без обучения:
+
+1. Создайте модель-скорер в `src/models/rule_based.py` (или в новом файле `src/models/`) с интерфейсом `BaseModel`:
+   - `fit(...)` — no-op, если обучение не нужно;
+   - `predict(X)` — возвращает `np.ndarray` скорингов (чем выше скор, тем выше шанс попасть в long).
+
+2. Подключите стратегию в `scripts/run_baselines.py` в функции `_strategy_specs()`:
+   - добавьте имя стратегии,
+   - `model_factory`,
+   - `target_col` (обычно `target_reg`),
+   - `model_params` (для логов и MLflow).
+
+3. Добавьте имя в `choices` аргумента `--strategies` в `run_baselines.py`.
+
+4. Запустите стратегию:
+   ```bash
+   PYTHONPATH=. python scripts/run_baselines.py --strategies <new_strategy_name>
+   ```
+
+5. Добавьте её в сравнительный график:
+   ```bash
+   PYTHONPATH=. python scripts/compare_runs.py --main-chart-order follow_winner follow_loser <new_strategy_name> lstm mlp_best bench_low_vol_ls --no-low-vol-line
+   ```
+
+6. Проверьте артефакты:
+   - `results/<new_strategy_name>/metrics.csv`
+   - `results/_summary/metrics.csv`
+   - `results/_summary/comparison.png`
